@@ -1,0 +1,5 @@
+experiment*
+data/
+wandb/
+plots/
+__pycache__/
