@@ -3,3 +3,5 @@ data/
 wandb/
 plots/
 __pycache__/
+old_experiments/
+rough_experiments/

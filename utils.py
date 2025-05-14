@@ -49,23 +49,20 @@ def get_ordered_body_coords(graph):
 
 
 
-def get_original_scale(preds, metadata, dataset, potential):
-    preds = copy.deepcopy(preds)
-    # de-normalize
-    dim = 0
-    for field in metadata['target_fields']:
-        size = dataset.mean[field].size(0)
-        preds[:,dim:dim+size] = preds[:,dim:dim+size] * dataset.std[field] + dataset.mean[field]
-        dim += size
+def get_base_field_name(field):
+    """
+    I call the fields something like 'velocity_x_solenoidal and want back only velocity_x
+    """
+    return '_'.join(field.split('_')[:2])
 
-    # add potential if needed
-    dim = 0
-    for field in metadata['target_fields']:
-        size = dataset.mean[field].size(0)
-        if field == 'actual_potential_diff':
-            print('adding potential')
-            potential = potential * dataset.std['potential_solution'] + dataset.mean['potential_solution']
-            preds[:,dim:dim+size] += potential
-        dim += size
 
+def get_original_scale(preds, metadata, means, stds, graph):
+    """
+    Returns a clone of the prediction on the same scale as the original data
+    """
+    preds = torch.clone(preds)
+    for dim, field in enumerate(metadata['target_fields']):
+        preds[:,dim] = preds[:,dim] * stds[field] + means[field]
+        if 'solenoidal' in field:
+            preds[:,dim] += graph[get_base_field_name(field)+'_potential'].squeeze()
     return preds

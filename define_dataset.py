@@ -19,7 +19,8 @@ from utils import get_ordered_body_coords
 class MyOwnDataset(Dataset):
 
     def __init__(self, metadata, root='./data', split='train'): 
-        self.metadata = metadata   
+        self.metadata = metadata  
+        self.split = split 
         self.which_folders = [200, 500] if split=='train' else [100]          
         super().__init__(root=os.path.join(root, split))   
         
@@ -44,7 +45,9 @@ class MyOwnDataset(Dataset):
 
     def process(self):
         def extract_polymesh(file_path: str):  #file path is ..../polyMesh
-
+            """
+            Extracts the data about the mesh which is found in the polymesh folder. 
+            """
             def extract_topology():
                 def extract(what: str, n_line: int, start_line: int, to_type):
                     with open(os.path.join(file_path, what), 'r') as f:
@@ -134,6 +137,9 @@ class MyOwnDataset(Dataset):
 
 
         def extract_fields(file_path: str):   # file_path is .../1000
+            """
+            From the file of the final timestep, I will extract the fields (pressure and velocity) and their time average
+            """
             def extract(what: str, n_line=19, start_line=21):
                 with open(os.path.join(file_path, what), 'r') as f:
                     lines = f.read().splitlines()
@@ -180,6 +186,11 @@ class MyOwnDataset(Dataset):
         
 
         def extract_graph(N: int, i: int):
+            """
+            Extracts the data from the OPENFoam output and makes it into a graph.
+            Since the simulation is finite volume, I will construct and use the graph which connects the cell centers (of adjecent cells),
+            not the mesh that has as edges the edge of the cell 
+            """
             owners, neighbours, points, faces, node_type_one_hot = extract_polymesh(os.path.join(self.raw_dir, f'DSE-DACE{N}/workdir.{i}/constant/polyMesh'))
             velocity, velocity_mean, pressure, pressure_mean, centers, body_coords = extract_fields(os.path.join(self.raw_dir, f'DSE-DACE{N}/workdir.{i}/1000'))
             bspline_points = extract_bspline_points(os.path.join(self.raw_dir, f'DSE-DACE{N}/workdir.{i}/input.txt'))
@@ -188,8 +199,8 @@ class MyOwnDataset(Dataset):
 
             return Data(**{'node_type_one_hot': node_type_one_hot, 'edge_index': edge_index, 
                         'distance_vector': distance_vector, 'distance_magnitude': distance_magnitude,
-                        'velocity': velocity, 'velocity_mean': velocity_mean, 
-                        'pressure': pressure, 'pressure_mean': pressure_mean,
+                        'velocity_x': velocity_mean[:,0].unsqueeze(-1), 'velocity_y': velocity_mean[:,1].unsqueeze(-1),
+                        'pressure': pressure_mean,
                         'pos': centers, 'bspline_points': bspline_points,
                         'distance_from_obj_vec': distance_from_obj_vec, 
                         'distance_from_obj_mag': distance_from_obj_mag,
@@ -210,11 +221,13 @@ class MyOwnDataset(Dataset):
         
 
         mean = {'distance_vector': 0, 'distance_magnitude': 0, 
-               'velocity_mean': 0, 'pressure_mean': 0,
+               'velocity_x': 0, 'velocity_y': 0, 'pressure': 0,
                'distance_from_obj_vec': 0,
                'distance_from_obj_mag': 0,
-               'potential_solution': 0,
-               'actual_potential_diff': 0}
+               'velocity_x_potential': 0,
+               'velocity_y_potential': 0,
+               'velocity_x_solenoidal': 0,
+               'velocity_y_solenoidal': 0}
         mean2 = copy.deepcopy(mean)
         
         filenames = []
@@ -225,8 +238,11 @@ class MyOwnDataset(Dataset):
                 if not check_orderability(graph):
                     print('discarded', N, i)
                     continue
-                graph.potential_solution = get_potential_solution(graph)
-                graph.actual_potential_diff = graph.velocity_mean - graph.potential_solution
+                potential_solution = get_potential_solution(graph)
+                graph.velocity_x_potential = potential_solution[:,0].unsqueeze(-1)
+                graph.velocity_y_potential = potential_solution[:,1].unsqueeze(-1)
+                graph.velocity_x_solenoidal = graph.velocity_x - graph.velocity_x_potential
+                graph.velocity_y_solenoidal = graph.velocity_y - graph.velocity_y_potential
                 torch.save(graph, os.path.join(self.processed_dir, f'DSE-DACE{N}_workdir{i}.pt'))
                 filenames.append(f'DSE-DACE{N}_workdir{i}.pt')
                 # get stats to calculate mean and std of meaningful attributes
@@ -247,6 +263,7 @@ class MyOwnDataset(Dataset):
         for key in self.mean.keys():
             graph[key] = (graph[key] - self.mean[key]) / self.std[key]
 
+
     def de_normalize_(self, graph):
         for key in self.mean.keys():
             graph[key] = graph[key] * self.std[key] + self.mean[key]
@@ -258,8 +275,20 @@ class MyOwnDataset(Dataset):
         self.normalize_(graph)
         x = torch.cat([graph[key] for key in self.metadata['node_features']], dim=1)
         edge_attr = torch.cat([graph[key] for key in self.metadata['edge_features']], dim=1)
-        y = torch.cat([graph[key] for key in self.metadata['target_fields']], dim=1)
-        return Data(**{'x': x, 'edge_attr': edge_attr, 'edge_index': graph.edge_index, 'target': y})
+        target = torch.cat([graph[key] for key in self.metadata['target_fields']], dim=1)
+        
+        if self.split == 'train':
+            return Data(**{'x': x, 'edge_attr': edge_attr, 'edge_index': graph.edge_index, 'target': target})
+        elif self.split == 'test':
+            self.de_normalize_(graph)
+            return Data(**{'x': x, 'edge_attr': edge_attr, 'edge_index': graph.edge_index, 'target': target,
+                        # I am pasing the potential as well to calculate the loss on the original data
+                        # so that it is more immediate to compare predicting the field vs only the solenoial part
+                        'velocity_x_potential': graph.velocity_x_potential,     
+                        'velocity_y_potential': graph.velocity_y_potential,
+                        'velocity_x': graph.velocity_x,
+                        'velocity_y': graph.velocity_y,
+                        'pressure': graph.pressure})    
     
     def get_to_plot(self, idx):
         filename = os.path.join(self.processed_dir, self.processed_file_names[idx])
@@ -300,21 +329,3 @@ class MyOwnDataset(Dataset):
     def len(self):
         return len(self.processed_file_names)
 
-
-def main():
-    metadata = {'node_features': ['node_type_one_hot', 'distance_from_obj_vec', 'distance_from_obj_mag'],
-                'edge_features': ['distance_vector', 'distance_magnitude'],
-                'target_fields': ['velocity_mean', 'pressure_mean'],
-                'model': {
-                    'encoder_mlp_hidden_dim': 128,
-                    'n_encoder_mlp_hidden_layers': 2, 
-                    'embedding_dim': 128,
-                    'n_processor_mlp_hidden_layers': 1,
-                    'n_message_passing_layers': 15,
-                    'n_decoder_mlp_hidden_layers': 3
-                }
-                }
-    dataset = MyOwnDataset(metadata)
-
-if __name__ == "__main__":
-    main()
