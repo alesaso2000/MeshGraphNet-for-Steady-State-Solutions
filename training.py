@@ -96,7 +96,6 @@ def test(model, dataloader, device, means, stds, metadata):
 
 
 def train(metadata, dataloader, test_dataloader, model, optimizer, scheduler, device, dataset):
-
     model = model.to(device)
     means = {key: val.to(device) for key, val in dataset.mean.items()}
     stds = {key: val.to(device) for key, val in dataset.std.items()}
@@ -141,7 +140,8 @@ def main():
     dataset, test_dataset, dataloader, test_dataloader, model, optimizer, scheduler = setup_training(metadata)
     print('done setting up training')
 
-    device = get_device(metadata)
+    # device = get_device(metadata)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f'device: {device}')
 
     model = train(metadata, dataloader, test_dataloader, model, optimizer, scheduler, device, dataset)

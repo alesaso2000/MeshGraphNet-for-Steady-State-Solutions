@@ -210,15 +210,14 @@ class MyOwnDataset(Dataset):
         def get_potential_solution(graph):
             xycpan, xpan, ypan, thpan, nor = body_panels(get_ordered_body_coords(graph).numpy()) # (N,2)
             sigma_x, sigma_y = sol_pot(xycpan, xpan, ypan, thpan, nor)
-            Ax_field, Ay_field = mk_coeff_xy(graph.pos[graph.node_type_one_hot[:,0]==0].numpy(), thpan, xpan, ypan)  
+            Ax_field, Ay_field = mk_coeff_xy(graph.pos.numpy(), thpan, xpan, ypan)  
             u_pot_field = np.matmul(Ax_field, sigma_x) + np.matmul(Ax_field, 0*sigma_y) + 1
             u_pot_field = torch.from_numpy(u_pot_field).float()
             v_pot_field = np.matmul(Ay_field, sigma_x) + np.matmul(Ay_field, 0*sigma_y) + 0
             v_pot_field = torch.from_numpy(v_pot_field).float()
-            potential_solution = torch.zeros_like(graph.pos)
-            potential_solution[graph.node_type_one_hot[:,0]==0] = torch.cat([u_pot_field, v_pot_field], dim=1)
+            potential_solution = torch.cat([u_pot_field, v_pot_field], dim=1)
             return potential_solution
-        
+            
 
         mean = {'distance_vector': 0, 'distance_magnitude': 0, 
                'velocity_x': 0, 'velocity_y': 0, 'pressure': 0,
@@ -227,7 +226,8 @@ class MyOwnDataset(Dataset):
                'velocity_x_potential': 0,
                'velocity_y_potential': 0,
                'velocity_x_solenoidal': 0,
-               'velocity_y_solenoidal': 0}
+               'velocity_y_solenoidal': 0,
+               'pos': 0}
         mean2 = copy.deepcopy(mean)
         
         filenames = []

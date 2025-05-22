@@ -28,7 +28,7 @@ def get_device(metadata):
             davice = metadata['device']
     else:
         device = 'cpu'
-    return device
+    return torch.device(device)
 
 
 
