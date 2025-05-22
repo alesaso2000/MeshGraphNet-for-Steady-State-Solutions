@@ -1,9 +1,10 @@
-experiment*
+experiment*/models
 data/
 wandb/
 plots/
 __pycache__/
 old_experiments/
 rough_experiments/
-dakota/
-prova
+prova.ipynb
+TODO.md
+read_openfoam.ipynb

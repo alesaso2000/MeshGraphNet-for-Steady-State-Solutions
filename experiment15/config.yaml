@@ -1,0 +1,30 @@
+edge_features:
+- distance_vector
+- distance_magnitude
+model:
+  embedding_dim: 128
+  encoder_mlp_hidden_dim: 128
+  n_decoder_mlp_hidden_layers: 3
+  n_encoder_mlp_hidden_layers: 2
+  n_message_passing_layers: 15
+  n_processor_mlp_hidden_layers: 2
+node_features:
+- node_type_one_hot
+- distance_from_obj_vec
+- distance_from_obj_mag
+- velocity_x_solenoidal
+- velocity_y_solenoidal
+- pos
+run: solenoidal_and_pos_as_input
+target_fields:
+- velocity_x   # velocity_x_solenoidal if I want it to predict the difference between pressure and the potential
+- velocity_y
+- pressure
+training_dynamics:
+  batch_size: 8
+  lr: 0.001
+  n_epochs: 2000
+  device: most_free
+  log_every: 10
+  scheduler_step_size: 20
+  scheduler_gamma: .98
