@@ -32,20 +32,34 @@ def get_device(metadata):
 
 
 
+# def get_ordered_body_coords(graph):
+#     if hasattr(graph, 'body_coords'):
+#         pos_body = graph.body_coords
+#     else:
+#         pos_body = graph.pos[graph.node_type_one_hot[:,0]==1]
+    
+#     right = pos_body[pos_body[:,0]>0]
+#     right = right[right[:,1].argsort(descending=True)]
+#     left = pos_body[pos_body[:,0]<=0]
+#     left = left[left[:,1].argsort(descending=False)]
+
+#     ordered_body_coords = torch.cat([right, left], dim=0)
+
+#     return ordered_body_coords
+ 
+
 def get_ordered_body_coords(graph):
     if hasattr(graph, 'body_coords'):
         pos_body = graph.body_coords
     else:
         pos_body = graph.pos[graph.node_type_one_hot[:,0]==1]
     
-    right = pos_body[pos_body[:,0]>0]
-    right = right[right[:,1].argsort(descending=True)]
-    left = pos_body[pos_body[:,0]<=0]
-    left = left[left[:,1].argsort(descending=False)]
-
-    ordered_body_coords = torch.cat([right, left], dim=0)
-
-    return ordered_body_coords
+    center = pos_body.mean(dim=0)
+    centered = pos_body - center
+    angles = torch.atan2(centered[:, 1], centered[:, 0])
+    sorted_idx = torch.argsort(angles)
+    sorted_pos_body = pos_body[sorted_idx]
+    return sorted_pos_body
 
 
 

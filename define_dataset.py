@@ -78,7 +78,7 @@ class MyOwnDataset(Dataset):
                         }
                     del patches['defaultFaces']
                     return patches
-                
+
                 with open(os.path.join(file_path, 'boundary'), 'r') as f:
                     lines = f.read()
 
@@ -208,7 +208,9 @@ class MyOwnDataset(Dataset):
         
 
         def get_potential_solution(graph):
-            xycpan, xpan, ypan, thpan, nor = body_panels(get_ordered_body_coords(graph).numpy()) # (N,2)
+            ordered_body_coords = get_ordered_body_coords(graph)
+            ordered_body_coords = torch.cat([ordered_body_coords, ordered_body_coords[0].unsqueeze(0)], dim=0)
+            xycpan, xpan, ypan, thpan, nor = body_panels(ordered_body_coords.numpy()) # (N,2)
             sigma_x, sigma_y = sol_pot(xycpan, xpan, ypan, thpan, nor)
             Ax_field, Ay_field = mk_coeff_xy(graph.pos.numpy(), thpan, xpan, ypan)  
             u_pot_field = np.matmul(Ax_field, sigma_x) + np.matmul(Ax_field, 0*sigma_y) + 1
@@ -217,7 +219,16 @@ class MyOwnDataset(Dataset):
             v_pot_field = torch.from_numpy(v_pot_field).float()
             potential_solution = torch.cat([u_pot_field, v_pot_field], dim=1)
             return potential_solution
-            
+        
+
+        def get_fourier_feature(graph):
+            frequencies = torch.tensor([2, 4, 8, 16, 32]) * torch.pi  # shape (5,)
+            minmaxed_positions = (graph.pos - graph.pos.min(dim=0).values) / (graph.pos.max(dim=0).values - graph.pos.min(dim=0).values) # shape (N,2)
+            arg = minmaxed_positions.unsqueeze(2) * frequencies  # shape(N,2,4)
+            sines = torch.sin(arg).reshape(graph.pos.shape[0], graph.pos.shape[1]*frequencies.shape[0])  # (points, coordinate, freq) -> (points, sin([x(freq[0]), y(freq[0]),..., x(freq[4]), y(freq[4])]))
+            cosines = torch.cos(arg).reshape(graph.pos.shape[0], graph.pos.shape[1]*frequencies.shape[0]) 
+            return torch.cat([sines, cosines], dim=1)
+
 
         mean = {'distance_vector': 0, 'distance_magnitude': 0, 
                'velocity_x': 0, 'velocity_y': 0, 'pressure': 0,
@@ -227,7 +238,8 @@ class MyOwnDataset(Dataset):
                'velocity_y_potential': 0,
                'velocity_x_solenoidal': 0,
                'velocity_y_solenoidal': 0,
-               'pos': 0}
+               'pos': 0,
+               'fourier_feature': 0}
         mean2 = copy.deepcopy(mean)
         
         filenames = []
@@ -238,6 +250,7 @@ class MyOwnDataset(Dataset):
                 if not check_orderability(graph):
                     print('discarded', N, i)
                     continue
+                graph.fourier_feature = get_fourier_feature(graph)
                 potential_solution = get_potential_solution(graph)
                 graph.velocity_x_potential = potential_solution[:,0].unsqueeze(-1)
                 graph.velocity_y_potential = potential_solution[:,1].unsqueeze(-1)
@@ -301,7 +314,7 @@ class MyOwnDataset(Dataset):
                        'pos': graph['pos'], 'potential_solution': graph.potential_solution, 
                        'actual_potential_diff': graph.actual_potential_diff,
                        'node_type_one_hot': graph.node_type_one_hot,
-                       'body_coords': graph.body_coords})
+                       'body_coords': graph.body_coords})   
     
     def get_to_plot_custom_metadata(self, metadata, idx):
         filename = os.path.join(self.processed_dir, self.processed_file_names[idx])
