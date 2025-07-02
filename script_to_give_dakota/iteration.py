@@ -6,8 +6,8 @@ import yaml
 import torch
 import torch.nn.functional as F
 
-from parse_mesh import extract_graph
-from foam_utils import create_boundary_field, save_pressure, save_U
+from parse_mesh import extract_graph, get_correct_velocity_pressure
+from foam_utils import save_pressure, save_U
 from models import MeshGraphNet
 
 
@@ -31,7 +31,6 @@ def get_original_scale(preds, metadata, graph):
         preds[:,dim] = preds[:,dim] * stds[field] + means[field]
         if 'solenoidal' in field:
             preds[:,dim] += graph[get_base_field_name(field)+'_potential'].squeeze()
-        # print(f'loss {field}', F.mse_loss(preds[:,dim].unsqueeze(-1), graph[field]))
     return preds
 
 
@@ -42,7 +41,7 @@ def load_and_predict(model_metadata_filepath, graph_filepath):
     graph = extract_graph(graph_filepath, metadata['node_features'], metadata['edge_features'])
     model = MeshGraphNet(metadata, graph)
     model.load_state_dict(torch.load(os.path.join(model_metadata_filepath, 'models/epoch1999.pt'), map_location=device))
-
+    model.eval()
     out = model(graph)
     out = get_original_scale(out, metadata, graph)
     velocity = out[:,:2]
@@ -51,117 +50,40 @@ def load_and_predict(model_metadata_filepath, graph_filepath):
     return velocity, pressure, graph
 
 
-# def get_boundary(velocity, pressure, graph):
-
-#     # create a dictionary with keys  prof, free, in, out and values the corresponding 
-#     velocity_boundary = {}
-#     pressure_boundary = {}
-#     # prof_extruded
-#     nodes_idx = graph.nodes_of_each_type['prof_extruded']
-#     velocity_boundary['prof_extruded'] = torch.zeros_like(velocity[nodes_idx])
-#     pressure_boundary['prof_extruded'] = pressure[nodes_idx]
-#     # free_extruded   
-#     # TODO: Check with damiano about boundary conditions
-#     nodes_idx = graph.nodes_of_each_type['free_extruded']
-#     velocity_boundary['free_extruded'] = torch.zeros_like(velocity[nodes_idx])
-#     pressure_boundary['free_extruded'] = torch.zeros_like(pressure[nodes_idx])
-#     # in_extruded  
-#     # TODO: Check with damiano about boundary conditions
-#     nodes_idx = graph.nodes_of_each_type['in_extruded']
-#     velocity_boundary['in_extruded'] = torch.zeros_like(velocity[nodes_idx])
-#     pressure_boundary['in_extruded'] = torch.zeros_like(pressure[nodes_idx])
-#     # out_extruded
-#     nodes_idx = graph.nodes_of_each_type['out_extruded']
-#     velocity_boundary['out_extruded'] = velocity[nodes_idx]
-#     pressure_boundary['out_extruded'] = pressure[nodes_idx]
-
-#     return velocity_boundary, pressure_boundary
-
-
-# def get_boundary(velocity, pressure, graph):
-
-#     # create a dictionary with keys  prof, free, in, out and values the corresponding 
-#     velocity_boundary = {}
-#     pressure_boundary = {}
-#     # prof_extruded
-#     nodes_idx = graph.nodes_of_each_type['prof_extruded']
-#     velocity_boundary['prof_extruded'] = torch.zeros_like(velocity[nodes_idx])
-#     pressure_boundary['prof_extruded'] = pressure[nodes_idx]
-#     # free_extruded   
-#     # TODO: Check with damiano about boundary conditions
-#     nodes_idx = graph.nodes_of_each_type['free_extruded']
-#     velocity_boundary['free_extruded'] = torch.zeros_like(velocity[nodes_idx])
-#     pressure_boundary['free_extruded'] = torch.zeros_like(pressure[nodes_idx])
-#     # in_extruded  
-#     # TODO: Check with damiano about boundary conditions
-#     nodes_idx = graph.nodes_of_each_type['in_extruded']
-#     velocity_boundary['in_extruded'] = torch.zeros_like(velocity[nodes_idx])
-#     pressure_boundary['in_extruded'] = torch.zeros_like(pressure[nodes_idx])
-#     # out_extruded
-#     nodes_idx = graph.nodes_of_each_type['out_extruded']
-#     velocity_boundary['out_extruded'] = velocity[nodes_idx]
-#     pressure_boundary['out_extruded'] = pressure[nodes_idx]
-
-#     return velocity_boundary, pressure_boundary
-
-
-
-# def save(velocity, pressure, velocity_boundary, pressure_boundary):
-
-#     save_foam_field(
-#         ofpp_internal=velocity,
-#         ofpp_boundary=velocity_boundary,
-#         object_field='U',
-#         output_file='./Upred(delete)',
-#         field_class='volVectorField', 
-#         field_location=str(1000), 
-#         field_dimensions='[0 1 -1 0 0 0 0]'
-#     )
-
-#     save_foam_field(
-#         ofpp_internal=pressure, 
-#         ofpp_boundary=pressure_boundary, 
-#         object_field='ppred', 
-#         output_file='./ppred(delete)', 
-#         field_class='volScalarField', 
-#         field_location=str(1000), 
-#         field_dimensions='[0 2 -2 0 0 0 0]'
-#     )
-
-
 def main():
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('--model_and_metadata_folder', type=str,
-                        default='/davinci-1/work/dsalvatore/CFD/meshgraphnet_cubotto/experiment13')
+                        default='/davinci-1/work/dsalvatore/CFD/meshgraphnet_cubotto/experiment19')
     parser.add_argument('--graph_filepath', type=str,
                         default='/davinci-1/work/dsalvatore/CFD/meshgraphnet_cubotto/data/test/raw/DSE-DACE100/workdir.1')
     args = parser.parse_args()
 
     velocity, pressure, graph = load_and_predict(args.model_and_metadata_folder, args.graph_filepath)
-
-    velocity_out_extruded = velocity[graph.nodes_of_each_type['out_extruded']]
-    save_U(velocity, velocity_out_extruded, './U_delete')
-    save_pressure(pressure, './pressure_delete')
-
-
-
-
-    # velocity_boundary, pressure_boundary = get_boundary(velocity, pressure, graph)
-    # velocity_boundary = torch.cat([v for v in velocity_boundary.values()], dim=0)
-    # pressure_boundary = torch.cat([v for v in pressure_boundary.values()], dim=0)
-    # velocity_boundary = create_boundary_field(
-    #     '/davinci-1/work/dsalvatore/CFD/meshgraphnet_cubotto/data/test/raw/DSE-DACE100/workdir.1/1000/C', 
-    #     velocity_boundary)
-    # pressure_boundary = create_boundary_field(
-    #     '/davinci-1/work/dsalvatore/CFD/meshgraphnet_cubotto/data/test/raw/DSE-DACE100/workdir.1/1000/C', 
-    #     pressure_boundary)
-    # save(velocity, pressure, velocity_boundary, pressure_boundary)
     
+    velocity_true, pressure_true = get_correct_velocity_pressure(os.path.join(args.graph_filepath, '1000'))
+
+    loss_velocity_x = F.mse_loss(velocity[:,0], velocity_true[:,0])
+    loss_velocity_y = F.mse_loss(velocity[:,1], velocity_true[:,1])
+    loss_pressure = F.mse_loss(pressure, pressure_true)
+    with open(os.path.join(args.graph_filepath, 'loss.out'), 'w') as f:
+        f.write(f"""loss velocity x: {loss_velocity_x}
+                loss velocity y: {loss_velocity_y}
+                loss pressure: {loss_pressure}""")
+    print(f"""loss velocity x: {loss_velocity_x}
+            loss velocity y: {loss_velocity_y}
+            loss pressure: {loss_pressure}""")
+    velocity_out_extruded = velocity[graph.nodes_of_each_type['out_extruded']]
+    save_U(velocity, velocity_out_extruded, os.path.join(args.graph_filepath, '1001/Upred'))
+    save_pressure(pressure, os.path.join(args.graph_filepath, '1001/ppred'))
 
 
 
 if __name__=='__main__':
     main()
+
+
+
+
 
 
 

@@ -186,15 +186,23 @@ def sol_pot(xy, xpan, ypan, thpan, norpan):
 #################### Extract graph ##################################################
 
 
+# def order_body_coords(pos_body):
+#     right = pos_body[pos_body[:,0]>0]
+#     right = right[right[:,1].argsort(descending=True)]
+#     left = pos_body[pos_body[:,0]<=0]
+#     left = left[left[:,1].argsort(descending=False)]
+
+#     ordered_body_coords = torch.cat([right, left], dim=0)
+
+#     return ordered_body_coords
+
+
 def order_body_coords(pos_body):
-    right = pos_body[pos_body[:,0]>0]
-    right = right[right[:,1].argsort(descending=True)]
-    left = pos_body[pos_body[:,0]<=0]
-    left = left[left[:,1].argsort(descending=False)]
-
-    ordered_body_coords = torch.cat([right, left], dim=0)
-
-    return ordered_body_coords
+    center = pos_body.mean(dim=0)
+    centered = pos_body - center
+    angles = torch.atan2(centered[:, 1], centered[:, 0])
+    sorted_idx = torch.argsort(angles)
+    return pos_body[sorted_idx]
 
 
 def extract_graph(file_path, node_features, edge_features=['edge']):
@@ -330,22 +338,24 @@ def extract_graph(file_path, node_features, edge_features=['edge']):
         return centers, body_coords #, velocity, pressure
 
 
-    def extract_bspline_points(file_path):
-        with open(file_path) as f:
-            line = f.read().split()
-        points = [float(p) for p in line]
-        return torch.tensor(points) # west_x, east_x, north_y, south_y
+    # def extract_bspline_points(file_path):
+    #     with open(file_path) as f:
+    #         line = f.read().split()
+    #     points = [float(p) for p in line]
+    #     return torch.tensor(points) # west_x, east_x, north_y, south_y
 
     
-    def check_orderability(body_coords, bspline_points):
-        """"
-        Checks that the nodes on the object are easily orderable (i.e. the tips are not higher or lower than the center)
-        """
-        check = body_coords[:,1].min() >= bspline_points[-1] and body_coords[:,1].max() <= bspline_points[-2]
-        return check
+    # def check_orderability(body_coords, bspline_points):
+    #     """"
+    #     Checks that the nodes on the object are easily orderable (i.e. the tips are not higher or lower than the center)
+    #     """
+    #     check = body_coords[:,1].min() >= bspline_points[-1] and body_coords[:,1].max() <= bspline_points[-2]
+    #     return check
     
     def get_potential_solution(body_coords, pos):
-        xycpan, xpan, ypan, thpan, nor = body_panels(order_body_coords(body_coords).numpy())
+        ordered_body_coords = order_body_coords(body_coords)
+        ordered_body_coords = torch.cat([ordered_body_coords, ordered_body_coords[0].unsqueeze(0)], dim=0)
+        xycpan, xpan, ypan, thpan, nor = body_panels(ordered_body_coords.numpy())
         sigma_x, sigma_y = sol_pot(xycpan, xpan, ypan, thpan, nor)
         Ax_field, Ay_field = mk_coeff_xy(pos.numpy(), thpan, xpan, ypan)  
         u_pot_field = np.matmul(Ax_field, sigma_x) + np.matmul(Ax_field, 0*sigma_y) + 1
@@ -354,15 +364,26 @@ def extract_graph(file_path, node_features, edge_features=['edge']):
         v_pot_field = torch.from_numpy(v_pot_field).float()
         potential_solution = torch.cat([u_pot_field, v_pot_field], dim=1)
         return potential_solution
+    
+
+    def get_fourier_feature(pos):
+        frequencies = torch.tensor([2, 4, 8, 16, 32]) * torch.pi  # shape (5,)
+        minmaxed_positions = (pos - pos.min(dim=0).values) / (pos.max(dim=0).values - pos.min(dim=0).values) # shape (N,2)
+        arg = minmaxed_positions.unsqueeze(2) * frequencies  # shape(N,2,4)
+        sines = torch.sin(arg).reshape(pos.shape[0], pos.shape[1]*frequencies.shape[0])  # (points, coordinate, freq) -> (points, sin([x(freq[0]), y(freq[0]),..., x(freq[4]), y(freq[4])]))
+        cosines = torch.cos(arg).reshape(pos.shape[0], pos.shape[1]*frequencies.shape[0]) 
+        return torch.cat([sines, cosines], dim=1)
+
 
     owners, neighbours, _, _, node_type_one_hot, nodes_of_each_type = extract_polymesh(os.path.join(file_path, 'constant/polyMesh'))
-    centers, body_coords = extract_fields(os.path.join(file_path, '1000'))
-    bspline_points = extract_bspline_points(os.path.join(file_path, f'input.txt'))
-    if not check_orderability(body_coords, bspline_points):
-        raise ValueError('The points are not orderable')
+    centers, body_coords = extract_fields(os.path.join(file_path, '0'))
+    # bspline_points = extract_bspline_points(os.path.join(file_path, f'input.txt'))
+    # if not check_orderability(body_coords, bspline_points):
+    #     raise ValueError('The points are not orderable')
     edge_index, distance_vector, distance_magnitude = make_edges(owners, neighbours, centers)
     distance_from_obj_vec, distance_from_obj_mag = get_distance_from_object(node_type_one_hot, centers)
     potential_solution = get_potential_solution(body_coords, centers)
+    fourier_feature = get_fourier_feature(centers)
 
     # Normalize and package into dict
     means = torch.load('/davinci-1/work/dsalvatore/CFD/meshgraphnet_cubotto/data/train/processed/means.pt', weights_only=False)
@@ -375,6 +396,7 @@ def extract_graph(file_path, node_features, edge_features=['edge']):
     features['velocity_x_potential'] = (potential_solution[:,0].unsqueeze(1) - means['velocity_x_potential']) / stds['velocity_x_potential']
     features['velocity_y_potential'] = (potential_solution[:,1].unsqueeze(1) - means['velocity_y_potential']) / stds['velocity_y_potential']
     features['pos'] = (centers - means['pos']) / stds['pos']
+    features['fourier_feature'] = (fourier_feature - means['fourier_feature']) / stds['fourier_feature']
     # Package without normalizing
     features['node_type_one_hot'] = node_type_one_hot
     
@@ -392,3 +414,23 @@ def extract_graph(file_path, node_features, edge_features=['edge']):
         # 'pressure': pressure
     })
 
+
+
+
+def get_correct_velocity_pressure(file_path='./1000'):
+    def extract(what: str, n_line=19, start_line=21):
+        with open(os.path.join(file_path, what), 'r') as f:
+            lines = f.read().splitlines()
+        n = int(lines[n_line])
+        return torch.tensor([[float(l) for l in line[1:-1].split()[:2]] for line in lines[start_line:start_line+n]])
+
+    def extract_pressure(which: str, n_line=19, start_line=21):
+        with open(os.path.join(file_path, which), 'r') as f:
+            lines = f.read().splitlines()
+        n = int(lines[n_line])
+        return torch.tensor([float(l) for l in lines[start_line: start_line+n]]).unsqueeze(-1)
+
+    velocity = extract('UMean')
+    pressure = extract_pressure('pMean')
+    
+    return velocity, pressure
